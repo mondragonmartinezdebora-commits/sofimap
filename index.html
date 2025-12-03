@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa de Coordenadas</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .topbar {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-view {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+        }
+
+        .btn-view:hover {
+            box-shadow: 0 6px 20px rgba(245, 87, 108, 0.6);
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .file-label {
+            background: #fff;
+            border: 2px dashed #667eea;
+            color: #667eea;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .file-label:hover {
+            background: #f0f4ff;
+            border-color: #764ba2;
+            color: #764ba2;
+        }
+
+        #map {
+            width: 100%;
+            height: calc(100vh - 90px);
+            border-radius: 0;
+        }
+
+        .info-box {
+            background: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #333;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .view-indicator {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .marker-popup {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .marker-popup b {
+            color: #667eea;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <label for="fileInput" class="file-label">
+            📂 Seleccionar Archivo CSV
+        </label>
+        <input id="fileInput" type="file" accept=".csv">
+        
+        <button class="btn" onclick="dibujarMarcadores()">
+            📍 Mostrar Marcadores
+        </button>
+        
+        <button class="btn btn-view" onclick="cambiarVista()">
+            🔄 Cambiar Vista
+        </button>
+        
+        <button class="btn" onclick="limpiarMapa()">
+            🗑️ Limpiar Mapa
+        </button>
+        
+        <div class="info-box" id="infoBox">
+            📌 Puntos cargados: 0
+        </div>
+
+        <div class="view-indicator" id="viewIndicator">
+            🛰️ Vista: Satélite
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let datosUbicaciones = [];
+        let vistaActual = 'satelite';
+        let capaActual;
+        
+        // Inicializar mapa centrado en Chiclayo, Perú
+        let mapa = L.map("map").setView([-6.7714, -79.8411], 12);
+
+        // Definir capas de mapa
+        const capaSatelite = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+            maxZoom: 20,
+            attribution: '© Google Satellite'
+        });
+
+        const capaCalles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        });
+
+        // Iniciar con vista satélite
+        capaActual = capaSatelite;
+        capaActual.addTo(mapa);
+
+        // Grupo para los marcadores
+        let grupoMarcadores = L.featureGroup().addTo(mapa);
+
+        // Leer archivo CSV
+        document.getElementById("fileInput").addEventListener("change", function(e) {
+            const archivo = e.target.files[0];
+            if (!archivo) return;
+
+            const lector = new FileReader();
+            lector.onload = function(evento) {
+                const contenido = evento.target.result;
+                procesarCSV(contenido);
+            };
+            lector.readAsText(archivo);
+        });
+
+        function procesarCSV(texto) {
+            const lineas = texto.split('\n');
+            datosUbicaciones = [];
+            
+            // Saltar la primera línea (encabezados)
+            for (let i = 1; i < lineas.length; i++) {
+                const linea = lineas[i].trim();
+                if (!linea) continue;
+                
+                // Dividir por coma, pero considerar coordenadas con coma
+                const partes = linea.split(',');
+                
+                if (partes.length >= 2) {
+                    const descripcion = partes[0].trim();
+                    // Unir el resto como coordenadas
+                    const coordenadas = partes.slice(1).join(',').trim();
+                    
+                    datosUbicaciones.push({
+                        descripcion: descripcion,
+                        coordenadas: coordenadas
+                    });
+                }
+            }
+            
+            document.getElementById('infoBox').textContent = `📌 Puntos cargados: ${datosUbicaciones.length}`;
+            console.log('Datos cargados:', datosUbicaciones);
+        }
+
+        function cambiarVista() {
+            // Remover capa actual
+            mapa.removeLayer(capaActual);
+
+            // Cambiar a la otra vista
+            if (vistaActual === 'satelite') {
+                capaActual = capaCalles;
+                vistaActual = 'calles';
+                document.getElementById('viewIndicator').innerHTML = '🗺️ Vista: Calles';
+            } else {
+                capaActual = capaSatelite;
+                vistaActual = 'satelite';
+                document.getElementById('viewIndicator').innerHTML = '🛰️ Vista: Satélite';
+            }
+
+            // Agregar nueva capa
+            capaActual.addTo(mapa);
+        }
+
+        function dibujarMarcadores() {
+            if (datosUbicaciones.length === 0) {
+                alert("⚠️ Primero carga un archivo CSV con las ubicaciones.");
+                return;
+            }
+
+            grupoMarcadores.clearLayers();
+            let marcadoresCreados = 0;
+
+            datosUbicaciones.forEach((item, index) => {
+                const coord = item.coordenadas.replace(/\s+/g, '');
+                const partes = coord.split(',');
+
+                if (partes.length >= 2) {
+                    const lat = parseFloat(partes[0]);
+                    const lon = parseFloat(partes[1]);
+
+                    if (!isNaN(lat) && !isNaN(lon)) {
+                        // Crear icono personalizado
+                        const iconoPersonalizado = L.divIcon({
+                            html: `<div style="background: #667eea; color: white; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 3px solid white; box-shadow: 0 2px 10px rgba(0,0,0,0.3);">${index + 1}</div>`,
+                            className: '',
+                            iconSize: [30, 30]
+                        });
+
+                        const marcador = L.marker([lat, lon], { icon: iconoPersonalizado })
+                            .bindPopup(`
+                                <div class="marker-popup">
+                                    <b>${item.descripcion}</b><br>
+                                    📍 Lat: ${lat.toFixed(6)}<br>
+                                    📍 Lon: ${lon.toFixed(6)}<br>
+                                    <a href="https://www.google.com/maps?q=${lat},${lon}" target="_blank" style="color: #667eea; text-decoration: none; font-weight: bold;">🗺️ Ver en Google Maps</a>
+                                </div>
+                            `)
+                            .addTo(grupoMarcadores);
+                        
+                        marcadoresCreados++;
+                    }
+                }
+            });
+
+            if (marcadoresCreados > 0) {
+                // Ajustar zoom para ver todos los marcadores
+                mapa.fitBounds(grupoMarcadores.getBounds(), { padding: [50, 50] });
+                document.getElementById('infoBox').textContent = `📌 Mostrando ${marcadoresCreados} ubicaciones`;
+            } else {
+                alert("⚠️ No se pudieron crear marcadores. Verifica el formato del archivo.");
+            }
+        }
+
+        function limpiarMapa() {
+            grupoMarcadores.clearLayers();
+            datosUbicaciones = [];
+            document.getElementById('infoBox').textContent = '📌 Puntos cargados: 0';
+            mapa.setView([-6.7714, -79.8411], 12);
+        }
+    </script>
+</body>
+</html>
